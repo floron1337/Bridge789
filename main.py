@@ -204,105 +204,139 @@ def validate_and_fix_prices(prices: dict[str, float]) -> dict:
     }
 
 
-def run_unit_tests(test_cases : dict[str, dict[str, float]], details=True, show_graphs=False):
+def run_unit_tests(test_cases: dict[str, dict], details=True, show_graphs=False):
     print("--- RUNNING EDGE CASE TESTS ---\n")
-    for ind, test in enumerate(test_cases.items()):
-        test_name, prices = test
+    for ind, (test_name, test_data) in enumerate(test_cases.items()):
         
-        print(f"=== {ind+1}.{test_name} ===")
+        prices = test_data["prices"]
+        expected_issues = test_data["expected_issues"]
+        
+        print(f"=== {ind+1}. {test_name} ===")
         result = validate_and_fix_prices(prices)
+        issues_returned = result["issues"]
+        actual_issues = len(issues_returned)
         
         if details:
             print(f"Input:  {prices}")
             print(f"Output: {result['fixed_prices']}")
+            print(f"Expected Issues: {expected_issues} | Actual Issues: {actual_issues}")
             print("Issues Fixed:")
-            if not result["issues"]:
+            if not issues_returned:
                 print("  - None (Perfect!)")
             else:
-                for issue in result["issues"]:
+                for issue in issues_returned:
                     print(f"  - {issue}")
         
-        # Quick validation check of the output
+        # Validation checks
         fp = result["fixed_prices"]
-        is_valid = (
+        is_prices_valid = (
             fp["mtpl"] < fp["limited_casco_500"] and
             fp["limited_casco_500"] < fp["limited_casco_200"] < fp["limited_casco_100"] and
             fp["casco_500"] < fp["casco_200"] < fp["casco_100"] and
             all(fp[f"casco_{d}"] > fp[f"limited_casco_{d}"] for d in ["100", "200", "500"])
         )
+        is_step_count_valid = (actual_issues == expected_issues)
         
-        print(f"Verdict: {'✅ PASSED' if is_valid else '❌ FAILED'}\n")
+        if is_prices_valid and is_step_count_valid:
+            print("Verdict: ✅ PASSED\n")
+        else:
+            print("Verdict: ❌ FAILED")
+            if not is_prices_valid:
+                print("  -> Reason: Math/hierarchy validation failed.")
+            if not is_step_count_valid:
+                print(f"  -> Reason: Step count mismatch (Expected {expected_issues}, Got {actual_issues}).")
+            print("\n")
         
         if show_graphs:
-            prices_diff_graph(prices, fp, title=f"{ind+1}.{test_name}")
+            prices_diff_graph(prices, fp, title=f"{ind+1}. {test_name}")
 
 
 if __name__ == "__main__":
     test_cases = {
-        "Problem Example: " : {
-            "mtpl": 400,
-            "limited_casco_100": 850,
-            "limited_casco_200": 900,
-            "limited_casco_500": 700,
-            "casco_100": 780,
-            "casco_200": 950,
-            "casco_500": 830,
+        "Problem Example": {
+            "prices": {
+                "mtpl": 400,
+                "limited_casco_100": 850,
+                "limited_casco_200": 900,
+                "limited_casco_500": 700,
+                "casco_100": 780,
+                "casco_200": 950,
+                "casco_500": 830,
+            },
+            "expected_issues": 2
         },
         "The Original Edge Case (Squeeze Logic)": {
-            "mtpl": 1000,
-            "limited_casco_100": 950,
-            "limited_casco_200": 900,
-            "limited_casco_500": 500,
-            "casco_100": 1000,
-            "casco_200": 800,  # Fails hierarchy
-            "casco_500": 600,
+            "prices": {
+                "mtpl": 1000,
+                "limited_casco_100": 950,
+                "limited_casco_200": 900,
+                "limited_casco_500": 500,
+                "casco_100": 1000,
+                "casco_200": 800,  # Fails hierarchy
+                "casco_500": 600,
+            },
+            "expected_issues": 2
         },
         "Perfect Input (Should touch nothing)": {
-            "mtpl": 400,
-            "limited_casco_100": 850,
-            "limited_casco_200": 720,
-            "limited_casco_500": 680,
-            "casco_100": 1200,
-            "casco_200": 1020,
-            "casco_500": 960,
+            "prices": {
+                "mtpl": 400,
+                "limited_casco_100": 850,
+                "limited_casco_200": 720,
+                "limited_casco_500": 680,
+                "casco_100": 1200,
+                "casco_200": 1020,
+                "casco_500": 960,
+            },
+            "expected_issues": 0
         },
         "Completely Inverted Hierarchy": {
-            "mtpl": 1500,        # MTPL is the most expensive
-            "limited_casco_100": 1000,
-            "limited_casco_200": 900,
-            "limited_casco_500": 800,
-            "casco_100": 500,    # Casco is the cheapest
-            "casco_200": 400,
-            "casco_500": 300,
+            "prices": {
+                "mtpl": 1500,        # MTPL is the most expensive
+                "limited_casco_100": 1000,
+                "limited_casco_200": 900,
+                "limited_casco_500": 800,
+                "casco_100": 500,    # Casco is the cheapest
+                "casco_200": 400,
+                "casco_500": 300,
+            },
+            "expected_issues": 4
         },
         "Completely Inverted Deductibles": {
-            "mtpl": 300,
-            "limited_casco_100": 700,
-            "limited_casco_200": 800, # Higher deductible costs more
-            "limited_casco_500": 900, # Highest deductible costs most
-            "casco_100": 1000,
-            "casco_200": 1100,
-            "casco_500": 1200,
+            "prices": {
+                "mtpl": 300,
+                "limited_casco_100": 700,
+                "limited_casco_200": 800, # Higher deductible costs more
+                "limited_casco_500": 900, # Highest deductible costs most
+                "casco_100": 1000,
+                "casco_200": 1100,
+                "casco_500": 1200,
+            },
+            "expected_issues": 4
         },
         "Flat Pricing (Equal values)": {
-            "mtpl": 800,
-            "limited_casco_100": 800,
-            "limited_casco_200": 800,
-            "limited_casco_500": 800,
-            "casco_100": 800,
-            "casco_200": 800,
-            "casco_500": 800,
+            "prices": {
+                "mtpl": 800,
+                "limited_casco_100": 800,
+                "limited_casco_200": 800,
+                "limited_casco_500": 800,
+                "casco_100": 800,
+                "casco_200": 800,
+                "casco_500": 800,
+            },
+            "expected_issues": 6
         },
         "Severe Multi-Price Corruption (Chaos)": {
-            "mtpl": 9999,
-            "limited_casco_100": 10,
-            "limited_casco_200": 5000,
-            "limited_casco_500": 20,
-            "casco_100": 15,
-            "casco_200": 6000,
-            "casco_500": 5,
+            "prices": {
+                "mtpl": 9999,
+                "limited_casco_100": 10,
+                "limited_casco_200": 5000,
+                "limited_casco_500": 20,
+                "casco_100": 15,
+                "casco_200": 6000,
+                "casco_500": 5,
+            },
+            "expected_issues": 5
         }
     }
     
-    run_unit_tests(test_cases, details=True, show_graphs=True)
-    
+    run_unit_tests(test_cases, details=False, show_graphs=False)
