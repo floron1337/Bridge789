@@ -336,7 +336,19 @@ if __name__ == "__main__":
                 "casco_500": 5,
             },
             "expected_issues": 5
+        }, 
+        "Very Low Initial values (Chaos)": {
+            "prices": {
+                "mtpl": 5,
+                "limited_casco_100": 3,
+                "limited_casco_200": 2,
+                "limited_casco_500": 1,
+                "casco_100": 1,
+                "casco_200": 2,
+                "casco_500": 1,
+            },
+            "expected_issues": 4
         }
     }
     
-    run_unit_tests(test_cases, details=False, show_graphs=False)
+    run_unit_tests(test_cases, details=False, show_graphs=True)
