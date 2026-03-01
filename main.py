@@ -61,145 +61,176 @@ def prices_diff_graph(original: dict[str, float], fixed: dict[str, float], title
     plt.tight_layout()
     plt.show()
 
+
+
 def validate_and_fix_prices(prices: dict[str, float]) -> dict:
     """
     Validates and fixes motor insurance pricing rules.
     Uses a post-processing diff comparison (initial vs. final) to accurately
     report the real, net adjustments made, eliminating intermediate noise.
     """
+    # Define proportional adjustments based on the deductible guide.
+    RATIO_200_DEDUCTIBLE = 0.85  # Represents roughly -15% relative to 100 EUR base.
+    RATIO_500_DEDUCTIBLE = 0.80  # Represents roughly -20% relative to 100 EUR base.
+    
+    # Ratios derived from average market prices to ensure proportional adjustments.
+    RATIO_MTPL_TO_LC = 500 / 900   
+    RATIO_CASCO_TO_LC = 1200 / 900 
+
     initial_prices = prices.copy()
-    fixed = prices.copy()
+    fixed_prices = prices.copy()
     
-    def r(val): return round(float(val), 2)
+    # --- Helper Functions ---
+    def round_price(val: float) -> float:
+        return round(float(val), 2)
     
-    def optimize_deductibles(prefix, lower_bounds=None):
-        p1 = fixed[f"{prefix}_100"]
-        p2 = fixed[f"{prefix}_200"]
-        p5 = fixed[f"{prefix}_500"]
+    def is_valid_sequence(price_100: float, price_200: float, price_500: float) -> bool:
+        # A higher deductible means a lower premium.
+        return price_500 < price_200 < price_100
+
+    def optimize_deductibles(product_prefix: str, lower_bounds: dict = None):
+        price_100 = fixed_prices[f"{product_prefix}_100"]
+        price_200 = fixed_prices[f"{product_prefix}_200"]
+        price_500 = fixed_prices[f"{product_prefix}_500"]
         
-        # If sequence is already perfectly valid, touch nothing
-        if p5 < p2 < p1:
+        # If the pricing rules are already respected, keep the prices as ground truth.
+        if is_valid_sequence(price_100, price_200, price_500):
             return
             
         candidates = []
+        lower_bounds = lower_bounds or {}
         
-        # Scenario 1: Try fixing ONLY the 100 deductible
-        np1 = r(p2 / 0.85)
-        if p5 < p2 < np1:
-            if not lower_bounds or np1 > lower_bounds.get("100", 0):
-                candidates.append((abs(np1 - p1), "100", np1, p2, p5))
+        # Keep fixes minimal by testing single-price adjustments first.
+        
+        # Scenario A1: Fix 100 EUR deductible based on the 200 EUR price
+        new_100_from_200 = round_price(price_200 / RATIO_200_DEDUCTIBLE)
+        if is_valid_sequence(new_100_from_200, price_200, price_500) and new_100_from_200 > lower_bounds.get("100", 0):
+            candidates.append((abs(new_100_from_200 - price_100), new_100_from_200, price_200, price_500))
+
+        # Scenario A2: Fix 100 EUR deductible based on the 500 EUR price
+        new_100_from_500 = round_price(price_500 / RATIO_500_DEDUCTIBLE)
+        if is_valid_sequence(new_100_from_500, price_200, price_500) and new_100_from_500 > lower_bounds.get("100", 0):
+            candidates.append((abs(new_100_from_500 - price_100), new_100_from_500, price_200, price_500))
             
-        # Scenario 2: Try fixing ONLY the 200 deductible (-15% guide)
-        np2 = r(p1 * 0.85)
-        if p5 < np2 < p1:
-            if not lower_bounds or np2 > lower_bounds.get("200", 0):
-                candidates.append((abs(np2 - p2), "200", p1, np2, p5))
+        # Scenario B: Fix only the 200 EUR deductible
+        new_200 = round_price(price_100 * RATIO_200_DEDUCTIBLE)
+        if is_valid_sequence(price_100, new_200, price_500) and new_200 > lower_bounds.get("200", 0):
+            candidates.append((abs(new_200 - price_200), price_100, new_200, price_500))
             
-        # Scenario 3: Try fixing ONLY the 500 deductible (-20% guide)
-        np5 = r(p1 * 0.80)
-        if np5 < p2 < p1:
-            if not lower_bounds or np5 > lower_bounds.get("500", 0):
-                candidates.append((abs(np5 - p5), "500", p1, p2, np5))
+        # Scenario C: Fix only the 500 EUR deductible
+        new_500 = round_price(price_100 * RATIO_500_DEDUCTIBLE)
+        if is_valid_sequence(price_100, price_200, new_500) and new_500 > lower_bounds.get("500", 0):
+            candidates.append((abs(new_500 - price_500), price_100, price_200, new_500))
             
-        # Apply the minimal fix
+        # Apply the fix with the absolute minimum disruption
         if candidates:
             candidates.sort(key=lambda x: x[0])
-            _, _, v1, v2, v5 = candidates[0]
-            fixed[f"{prefix}_100"] = v1
-            fixed[f"{prefix}_200"] = v2
-            fixed[f"{prefix}_500"] = v5
+            _, best_100, best_200, best_500 = candidates[0]
+            
+            fixed_prices[f"{product_prefix}_100"] = best_100
+            fixed_prices[f"{product_prefix}_200"] = best_200
+            fixed_prices[f"{product_prefix}_500"] = best_500
         else:
-            # Failsafe for severe multi-price corruption
-            base = p1
-            if lower_bounds and base <= lower_bounds.get("100", 0):
-                base = lower_bounds.get("100", 0) + 50 
+            # Failsafe logic to establish a new valid baseline if the tier is heavily corrupted
+            base_100 = price_100
+            if base_100 <= lower_bounds.get("100", 0):
+                base_100 = lower_bounds.get("100", 0) + 50 
 
-            nv2 = r(base * 0.85)
-            nv5 = r(base * 0.80)
+            new_200 = round_price(base_100 * RATIO_200_DEDUCTIBLE)
+            new_500 = round_price(base_100 * RATIO_500_DEDUCTIBLE)
 
-            if lower_bounds and nv2 <= lower_bounds.get("200", 0):
-                nv2 = lower_bounds.get("200", 0) + 10
-            if lower_bounds and nv5 <= lower_bounds.get("500", 0):
-                nv5 = lower_bounds.get("500", 0) + 10
+            if new_200 <= lower_bounds.get("200", 0):
+                new_200 = lower_bounds.get("200", 0) + 10
+            if new_500 <= lower_bounds.get("500", 0):
+                new_500 = lower_bounds.get("500", 0) + 10
 
-            fixed[f"{prefix}_100"] = base
-            fixed[f"{prefix}_200"] = nv2
-            fixed[f"{prefix}_500"] = nv5
+            fixed_prices[f"{product_prefix}_100"] = base_100
+            fixed_prices[f"{product_prefix}_200"] = new_200
+            fixed_prices[f"{product_prefix}_500"] = new_500
 
-    # --- 1. Optimize Internal Deductibles first ---
+    # Optimize internal deductibles to ensure the deductible ordering rule is respected.
     optimize_deductibles("limited_casco")
     optimize_deductibles("casco")
     
-    # --- 2. Enforce Hierarchy between products ---
-    if fixed["mtpl"] >= fixed["limited_casco_500"]:
-        new_mtpl = r(fixed["limited_casco_100"] * (500 / 900))
-        if new_mtpl >= fixed["limited_casco_500"]:
-            new_mtpl = r(fixed["limited_casco_500"] * 0.90)
-        fixed["mtpl"] = new_mtpl
+    # Enforce product hierarchy: MTPL < Limited Casco < Casco.
+    
+    # Check the relationship between MTPL and the cheapest Limited Casco product
+    if fixed_prices["mtpl"] >= fixed_prices["limited_casco_500"]:
+        adjusted_mtpl = round_price(fixed_prices["limited_casco_100"] * RATIO_MTPL_TO_LC)
         
-    for ded in ["100", "200", "500"]:
-        lc_val = fixed[f"limited_casco_{ded}"]
-        c_val = fixed[f"casco_{ded}"]
-        
-        if c_val <= lc_val:
-            new_c = r(lc_val * (1200 / 900))
+        # Ensure the proportional scaling didn't overshoot the closest tier
+        # If so, adjust MTPL based on the LC500 price transformed into LC100
+        if adjusted_mtpl >= fixed_prices["limited_casco_500"]:
+            adjusted_mtpl = round_price(fixed_prices["limited_casco_500"] * 0.90)
             
-            # Squeeze logic
+        fixed_prices["mtpl"] = adjusted_mtpl
+        
+    # Check the relationship between Casco and Limited Casco for matching deductibles
+    for deductible in ["100", "200", "500"]:
+        lc_price = fixed_prices[f"limited_casco_{deductible}"]
+        casco_price = fixed_prices[f"casco_{deductible}"]
+        
+        if casco_price <= lc_price:
+            new_casco_price = round_price(lc_price * RATIO_CASCO_TO_LC)
+            
+            # Squeeze logic to ensure adjusting a lower deductible doesn't overtake a higher one
             upper_bound = None
-            if ded == "200": upper_bound = fixed["casco_100"]
-            if ded == "500": upper_bound = fixed["casco_200"]
+            if deductible == "200": upper_bound = fixed_prices["casco_100"]
+            if deductible == "500": upper_bound = fixed_prices["casco_200"]
             
-            if upper_bound and new_c >= upper_bound:
-                if lc_val < upper_bound:
-                    new_c = r((lc_val + upper_bound) / 2)
+            if upper_bound and new_casco_price >= upper_bound:
+                if lc_price < upper_bound:
+                    new_casco_price = round_price((lc_price + upper_bound) / 2)
                 else:
-                    new_c = r(lc_val * 1.05)
+                    new_casco_price = round_price(lc_price * 1.05)
                     
-            fixed[f"casco_{ded}"] = new_c
+            fixed_prices[f"casco_{deductible}"] = new_casco_price
             
-    # --- 3. Final Failsafe ---
-    p1, p2, p5 = fixed["casco_100"], fixed["casco_200"], fixed["casco_500"]
-    if not (p5 < p2 < p1):
-        casco_bounds = {
-            "100": fixed["limited_casco_100"],
-            "200": fixed["limited_casco_200"],
-            "500": fixed["limited_casco_500"]
+    # Hierarchy failsafe to verify internal Casco ordering after hierarchy adjustments
+    if not is_valid_sequence(fixed_prices["casco_100"], fixed_prices["casco_200"], fixed_prices["casco_500"]):
+        casco_lower_bounds = {
+            "100": fixed_prices["limited_casco_100"],
+            "200": fixed_prices["limited_casco_200"],
+            "500": fixed_prices["limited_casco_500"]
         }
-        optimize_deductibles("casco", lower_bounds=casco_bounds)
+        optimize_deductibles("casco", lower_bounds=casco_lower_bounds)
         
-    # ==========================================
-    # --- NEW: POST-PROCESSING ISSUES SYSTEM ---
-    # ==========================================
+    # Generate explanations for automatically fixed violations in plain language.
     issues = []
+    
     for key, initial_val in initial_prices.items():
-        final_val = fixed[key]
+        final_val = fixed_prices[key]
         
-        # Only log an issue if the net price actually changed
-        if initial_val != final_val:
-            reasons = []
+        # Only report if a net change actually occurred
+        if initial_val == final_val:
+            continue
             
-            # Infer the reason by looking at what was wrong in the INITIAL state
-            if key == "mtpl" and initial_val >= initial_prices["limited_casco_500"]:
-                reasons.append("MTPL must be cheaper than Limited Casco")
+        reasons = []
+        
+        # Reverse engineer the reason by analyzing the flawed initial state
+        if key == "mtpl" and initial_val >= initial_prices["limited_casco_500"]:
+            reasons.append("MTPL must be cheaper than Limited Casco")
+            
+        if "casco" in key and "limited" not in key:
+            deductible_tier = key.split("_")[1]
+            if initial_val <= initial_prices[f"limited_casco_{deductible_tier}"]:
+                reasons.append(f"Casco must be more expensive than Limited Casco at the {deductible_tier}€ deductible")
+        
+        if key != "mtpl":
+            prefix = "limited_casco" if "limited" in key else "casco"
+            orig_100 = initial_prices[f"{prefix}_100"]
+            orig_200 = initial_prices[f"{prefix}_200"]
+            orig_500 = initial_prices[f"{prefix}_500"]
+            
+            if not is_valid_sequence(orig_100, orig_200, orig_500):
+                reasons.append("the internal deductible ordering was invalid (higher deductibles must cost less)")
                 
-            if "casco" in key and "limited" not in key:
-                ded = key.split("_")[1]
-                if initial_val <= initial_prices[f"limited_casco_{ded}"]:
-                    reasons.append(f"Casco must be more expensive than Limited Casco at the {ded} deductible")
-            
-            if key != "mtpl":
-                prefix = "limited_casco" if "limited" in key else "casco"
-                p1, p2, p5 = initial_prices[f"{prefix}_100"], initial_prices[f"{prefix}_200"], initial_prices[f"{prefix}_500"]
-                if not (p5 < p2 < p1):
-                    reasons.append("the internal deductible sequence was corrupted")
-                    
-            # If a price was changed purely as a side-effect (failsafe/cascade) and had no direct violations originally:
-            reason_str = " and ".join(reasons) if reasons else "to resolve overlapping pricing violations from a cascade"
-            
-            issues.append(f"Adjusted '{key}' from {initial_val} to {final_val} because {reason_str}.")
+        reason_string = " and ".join(reasons) if reasons else "to resolve overlapping pricing violations caused by adjusting other products"
+        issues.append(f"Adjusted '{key}' from {initial_val} to {final_val} because {reason_string}.")
 
+    # Return exactly the expected dictionary format.
     return {
-        "fixed_prices": fixed,
+        "fixed_prices": fixed_prices,
         "issues": issues
     }
 
@@ -348,6 +379,18 @@ if __name__ == "__main__":
                 "casco_500": 1,
             },
             "expected_issues": 4
+        },
+        "Sub-optimal 100€ Fix (Anchor to 500)": {
+            "prices": {
+                "mtpl": 400,
+                "limited_casco_100": 850,
+                "limited_casco_200": 860,
+                "limited_casco_500": 800,
+                "casco_100": 1500,
+                "casco_200": 1200,
+                "casco_500": 1000,
+            },
+            "expected_issues": 1
         }
     }
     
