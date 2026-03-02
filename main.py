@@ -158,8 +158,7 @@ def validate_and_fix_prices(prices: dict[str, float]) -> dict:
     if fixed_prices["mtpl"] >= fixed_prices["limited_casco_500"]:
         adjusted_mtpl = round_price(fixed_prices["limited_casco_100"] * RATIO_MTPL_TO_LC)
         
-        # Ensure the proportional scaling didn't overshoot the closest tier
-        # If so, adjust MTPL based on the LC500 price transformed into LC100
+        # Failsafe if we can't set MTPL based on LC100, we set it as 90% of LC500
         if adjusted_mtpl >= fixed_prices["limited_casco_500"]:
             adjusted_mtpl = round_price(fixed_prices["limited_casco_500"] * 0.90)
             
